@@ -5,10 +5,50 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + TS</title>
+    <style>
+      body {
+        background-color: lightgray;
+      }
+      .container {
+        width: 100%;
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        align-items: center;
+      }
+      select {
+        padding: .5rem;
+      }
+      button {
+        padding: .5rem;
+      }
+      .controls-div {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+  </style>
   </head>
   <body>
-    <div id="app"></div>
-    <canvas width="512" height="512"></canvas>
+    <div class="container">
+      <canvas width="1024" height="1024"></canvas>
+
+      <div class="controls-div">
+        <div>
+          <label for="grid-size">Grid size:</label>
+          <select name="grid-size" id="grid-size">
+            <option value="16">16</option>
+            <option value="32">32</option>
+            <option value="64">64</option>
+            <option value="128">128</option>
+            <option value="256">256</option>
+          </select>
+        </div>
+
+        <button>Reset</button>
+        <button>Pause</button>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

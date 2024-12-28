@@ -1,7 +1,7 @@
 import Renderer from "./renderer";
 
-const GRID_SIZE = 32;
-const UPDATE_INTERVAL = 500;
+const GRID_SIZE = 256;
+const UPDATE_INTERVAL = 100;
 const WORKGROUP_SIZE = 8;
 
 let step = 0;
@@ -26,11 +26,11 @@ device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
 const vertices = new Float32Array([
 //   X,    Y,
-  -0.8, -0.8, // Triangle 1 (Blue)
+  -0.8, -0.8,
    0.8, -0.8,
    0.8,  0.8,
 
-  -0.8, -0.8, // Triangle 2 (Red)
+  -0.8, -0.8,
    0.8,  0.8,
   -0.8,  0.8,
 ]);
@@ -69,12 +69,6 @@ for (let i = 0; i < cellStateArray.length; ++i) {
   cellStateArray[i] = Math.random() > 0.6 ? 1 : 0;
 }
 device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
-
-// Mark every other cell of the second grid as active.
-for (let i = 0; i < cellStateArray.length; i++) {
-  cellStateArray[i] = i % 2;
-}
-device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
 
 const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
@@ -128,7 +122,8 @@ const simulationShaderModule = device.createShaderModule({
     @group(0) @binding(2) var<storage, read_write> cellStateOut: array<u32>;
 
     fn cellIndex(cell: vec2u) -> u32 {
-      return cell.y * u32(grid.x) + cell.x;
+      return (cell.y % u32(grid.y)) * u32(grid.x) +
+            (cell.x % u32(grid.x));
     }
 
     fn cellActive(x: u32, y: u32) -> u32 {
@@ -137,11 +132,26 @@ const simulationShaderModule = device.createShaderModule({
 
     @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE}, 1)
     fn computeMain(@builtin(global_invocation_id) cell: vec3u) {
-      // New lines. Flip the cell state every step.
-      if (cellStateIn[cellIndex(cell.xy)] == 1) {
-        cellStateOut[cellIndex(cell.xy)] = 0;
-      } else {
-        cellStateOut[cellIndex(cell.xy)] = 1;
+      let activeNeighbors = cellActive(cell.x+1, cell.y+1) +
+                            cellActive(cell.x+1, cell.y) +
+                            cellActive(cell.x+1, cell.y-1) +
+                            cellActive(cell.x, cell.y-1) +
+                            cellActive(cell.x-1, cell.y-1) +
+                            cellActive(cell.x-1, cell.y) +
+                            cellActive(cell.x-1, cell.y+1) +
+                            cellActive(cell.x, cell.y+1);
+      
+      let i = cellIndex(cell.xy);
+      switch activeNeighbors {
+        case 2: {
+          cellStateOut[i] = cellStateIn[i];
+        }
+        case 3: {
+          cellStateOut[i] = 1;
+        }
+        default: {
+          cellStateOut[i] = 0;
+        }
       }
     }
   `
