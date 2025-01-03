@@ -1,12 +1,49 @@
 import Renderer from "./renderer";
 
-const GRID_SIZE = 256;
-const UPDATE_INTERVAL = 100;
+const GRID_SIZE = 1024;
 const WORKGROUP_SIZE = 8;
 
+let targetFPS = 10; // Desired FPS
+let frameInterval = 1000 / targetFPS; // Interval in milliseconds
 let step = 0;
+let isPaused = false;
+
+const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+for (let i = 0; i < initialStateArray.length; ++i) {
+  initialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
+const pauseButton = document.querySelector<HTMLButtonElement>("#pause-button");
+const restartButton = document.querySelector<HTMLButtonElement>("#restart-button");
+
+pauseButton?.addEventListener("click", (_event) => {
+  isPaused = !isPaused;
+  pauseButton.textContent = isPaused ? "Resume" : "Pause";
+
+  if (!isPaused) {
+    requestAnimationFrame(renderLoop);
+  }
+});
+
+restartButton?.addEventListener("click", async (_event) => {
+  await device.queue.onSubmittedWorkDone();
+
+  device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
+  device.queue.writeBuffer(cellStateStorage[1], 0, initialStateArray);
+});
+
+const fpsForm = document.querySelector<HTMLFormElement>("#fps-form");
+fpsForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const fpsInput = document.querySelector<HTMLInputElement>("#fps-input");
+
+  const fpsValue = fpsInput?.value;
+  if (fpsValue) {
+    targetFPS = parseInt(fpsInput.value);
+    frameInterval = 1000 / targetFPS;
+  }
+});
 
 const { ctx, device } = await Renderer.create(canvas);
 
@@ -16,13 +53,13 @@ ctx.configure({
   format: canvasFormat,
 });
 
-const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
-const uniformBuffer = device.createBuffer({
+const gridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+const gridBuffer = device.createBuffer({
   label: "Grid Uniforms",
-  size: uniformArray.byteLength,
+  size: gridArray.byteLength,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
-device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+device.queue.writeBuffer(gridBuffer, 0, gridArray);
 
 const vertices = new Float32Array([
 //   X,    Y,
@@ -51,24 +88,20 @@ const vertexBufferLayout = {
   }],
 } satisfies GPUVertexBufferLayout;
 
-const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 const cellStateStorage = [
   device.createBuffer({
     label: "Cell State",
-    size: cellStateArray.byteLength,
+    size: initialStateArray.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
   device.createBuffer({
     label: "Cell State B",
-     size: cellStateArray.byteLength,
+     size: initialStateArray.byteLength,
      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
 ];
 
-for (let i = 0; i < cellStateArray.length; ++i) {
-  cellStateArray[i] = Math.random() > 0.6 ? 1 : 0;
-}
-device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
+device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
 const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
@@ -182,7 +215,7 @@ const bindGroups = [
     entries: [
       {
         binding: 0,
-        resource: { buffer: uniformBuffer }
+        resource: { buffer: gridBuffer }
       },
       {
         binding: 1,
@@ -200,7 +233,7 @@ const bindGroups = [
     entries: [
       {
         binding: 0,
-        resource: { buffer: uniformBuffer }
+        resource: { buffer: gridBuffer }
       },
       {
         binding: 1,
@@ -280,6 +313,23 @@ const updateGrid = () => {
 
   // Finish the command buffer and immediately submit it.
   device.queue.submit([encoder.finish()]);
-}
+};
 
-setInterval(updateGrid, UPDATE_INTERVAL);
+
+let lastFrameTime = 0;
+
+const renderLoop = (timestamp: number) => {
+  if (isPaused) return;
+
+  const elapsedTime = timestamp - lastFrameTime;
+
+  if (elapsedTime >= frameInterval) {
+    lastFrameTime = timestamp;
+    updateGrid(); // Perform the rendering and update logic
+  }
+
+  requestAnimationFrame(renderLoop);
+};
+
+// Start the render loop
+requestAnimationFrame(renderLoop);

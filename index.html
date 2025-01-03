@@ -9,12 +9,13 @@
       body {
         background-color: lightgray;
       }
-      .container {
+      #container {
         width: 100%;
         display: flex;
         gap: 1rem;
         justify-content: center;
         align-items: center;
+        font-family: Arial, sans-serif;
       }
       select {
         padding: .5rem;
@@ -22,18 +23,28 @@
       button {
         padding: .5rem;
       }
-      .controls-div {
+      #main-div {
+        position: relative;
+      }
+      #controls-div {
         display: flex;
         flex-direction: column;
         gap: 1rem;
       }
-  </style>
+      #fps-form {
+        display: flex;
+        flex-direction: row;
+        gap: 0.5rem;
+      }
+    </style>
   </head>
   <body>
-    <div class="container">
-      <canvas width="1024" height="1024"></canvas>
+    <div id="container">
+      <div id="main-div">
+        <canvas width="1024" height="1024"></canvas>
+      </div>
 
-      <div class="controls-div">
+      <div id="controls-div">
         <div>
           <label for="grid-size">Grid size:</label>
           <select name="grid-size" id="grid-size">
@@ -42,11 +53,20 @@
             <option value="64">64</option>
             <option value="128">128</option>
             <option value="256">256</option>
+            <option value="512">512</option>
+            <option value="1024">1024</option>
           </select>
         </div>
+        <div>
+          <label for="fps-input">Target interval [ms] (capped to monitor's refresh rate):</label>
+          <form id="fps-form" id="fps-form">
+            <input type="number" min="1" id="fps-input" value="10" required />
+            <button type="submit" id="fps-button">Set</button>
+          </form>
+        </div>
 
-        <button>Reset</button>
-        <button>Pause</button>
+        <button id="restart-button">Restart</button>
+        <button id="pause-button">Pause</button>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
