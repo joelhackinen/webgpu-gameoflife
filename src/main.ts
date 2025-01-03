@@ -1,6 +1,6 @@
 import Renderer from "./renderer";
 
-const GRID_SIZE = 1024;
+const GRID_SIZE = 256;
 const WORKGROUP_SIZE = 8;
 
 let targetFPS = 10; // Desired FPS
@@ -14,9 +14,8 @@ for (let i = 0; i < initialStateArray.length; ++i) {
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
-const pauseButton = document.querySelector<HTMLButtonElement>("#pause-button");
-const restartButton = document.querySelector<HTMLButtonElement>("#restart-button");
 
+const pauseButton = document.querySelector<HTMLButtonElement>("#pause-button");
 pauseButton?.addEventListener("click", (_event) => {
   isPaused = !isPaused;
   pauseButton.textContent = isPaused ? "Resume" : "Pause";
@@ -26,6 +25,7 @@ pauseButton?.addEventListener("click", (_event) => {
   }
 });
 
+const restartButton = document.querySelector<HTMLButtonElement>("#restart-button");
 restartButton?.addEventListener("click", async (_event) => {
   await device.queue.onSubmittedWorkDone();
 
@@ -294,7 +294,7 @@ const updateGrid = () => {
 
   step++;
 
-  const pass = encoder.beginRenderPass({
+  const renderPass = encoder.beginRenderPass({
     colorAttachments: [{
       view: ctx.getCurrentTexture().createView(),
       loadOp: "clear",
@@ -303,13 +303,13 @@ const updateGrid = () => {
     }]
   });
 
-  pass.setPipeline(cellPipeline);
-  pass.setVertexBuffer(0, vertexBuffer);
-  pass.setBindGroup(0, bindGroups[step % 2]);
+  renderPass.setPipeline(cellPipeline);
+  renderPass.setVertexBuffer(0, vertexBuffer);
+  renderPass.setBindGroup(0, bindGroups[step % 2]);
 
-  pass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE);
+  renderPass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE);
 
-  pass.end();
+  renderPass.end();
 
   // Finish the command buffer and immediately submit it.
   device.queue.submit([encoder.finish()]);
