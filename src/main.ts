@@ -1,17 +1,20 @@
 import Renderer from "./renderer";
 
-const GRID_SIZE = 256;
+let GRID_SIZE = 64;
 const WORKGROUP_SIZE = 8;
 
 let targetFPS = 10; // Desired FPS
 let frameInterval = 1000 / targetFPS; // Interval in milliseconds
 let step = 0;
 let isPaused = false;
+let currentInitialState: Uint32Array;
+
 
 const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 for (let i = 0; i < initialStateArray.length; ++i) {
   initialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
 }
+currentInitialState = initialStateArray;
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
 
@@ -29,8 +32,9 @@ const restartButton = document.querySelector<HTMLButtonElement>("#restart-button
 restartButton?.addEventListener("click", async (_event) => {
   await device.queue.onSubmittedWorkDone();
 
-  device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
-  device.queue.writeBuffer(cellStateStorage[1], 0, initialStateArray);
+  step = 0;
+  device.queue.writeBuffer(cellStateStorage[0], 0, currentInitialState);
+  device.queue.writeBuffer(cellStateStorage[1], 0, currentInitialState);
 });
 
 const fpsForm = document.querySelector<HTMLFormElement>("#fps-form");
@@ -44,6 +48,75 @@ fpsForm?.addEventListener("submit", (event) => {
     frameInterval = 1000 / targetFPS;
   }
 });
+
+const gridSizeSelect = document.querySelector<HTMLSelectElement>("#grid-size");
+gridSizeSelect?.addEventListener("change", async (event) => {
+  const newSize = parseInt((event.target as HTMLSelectElement).value);
+  await handleGridSizeChange(newSize);
+});
+
+async function handleGridSizeChange(newSize: number) {
+  const wasPaused = isPaused;
+  isPaused = true;
+  pauseButton!.textContent = "Pause";
+
+  await device.queue.onSubmittedWorkDone();
+
+  GRID_SIZE = newSize;
+
+  const newInitialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+  for (let i = 0; i < newInitialStateArray.length; ++i) {
+    newInitialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+  }
+  currentInitialState = newInitialStateArray;
+
+  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+  device.queue.writeBuffer(gridBuffer, 0, newGridArray);
+
+  cellStateStorage[0].destroy();
+  cellStateStorage[1].destroy();
+
+  cellStateStorage[0] = device.createBuffer({
+    label: "Cell State",
+    size: newInitialStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  cellStateStorage[1] = device.createBuffer({
+    label: "Cell State B",
+    size: newInitialStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+
+  device.queue.writeBuffer(cellStateStorage[0], 0, newInitialStateArray);
+  device.queue.writeBuffer(cellStateStorage[1], 0, newInitialStateArray);
+
+  bindGroups[0] = device.createBindGroup({
+    label: "Cell renderer bind group A",
+    layout: bindGroupLayout,
+    entries: [
+      { binding: 0, resource: { buffer: gridBuffer } },
+      { binding: 1, resource: { buffer: cellStateStorage[0] } },
+      { binding: 2, resource: { buffer: cellStateStorage[1] } }
+    ],
+  });
+  bindGroups[1] = device.createBindGroup({
+    label: "Cell renderer bind group B",
+    layout: bindGroupLayout,
+    entries: [
+      { binding: 0, resource: { buffer: gridBuffer } },
+      { binding: 1, resource: { buffer: cellStateStorage[1] } },
+      { binding: 2, resource: { buffer: cellStateStorage[0] } },
+    ],
+  });
+
+  step = 0;
+  isPaused = wasPaused;
+  pauseButton!.textContent = isPaused ? 'Resume' : 'Pause';
+
+  if (!isPaused) {
+    requestAnimationFrame(renderLoop);
+  }
+}
 
 const { ctx, device } = await Renderer.create(canvas);
 
