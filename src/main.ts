@@ -9,7 +9,6 @@ let step = 0;
 let isPaused = false;
 let currentInitialState: Uint32Array;
 
-
 const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 for (let i = 0; i < initialStateArray.length; ++i) {
   initialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
@@ -28,7 +27,8 @@ pauseButton?.addEventListener("click", (_event) => {
   }
 });
 
-const restartButton = document.querySelector<HTMLButtonElement>("#restart-button");
+const restartButton =
+  document.querySelector<HTMLButtonElement>("#restart-button");
 restartButton?.addEventListener("click", async (_event) => {
   await device.queue.onSubmittedWorkDone();
 
@@ -55,7 +55,7 @@ gridSizeSelect?.addEventListener("change", async (event) => {
   await handleGridSizeChange(newSize);
 });
 
-async function handleGridSizeChange(newSize: number) {
+const handleGridSizeChange = async (newSize: number) => {
   const wasPaused = isPaused;
   isPaused = true;
   pauseButton!.textContent = "Pause";
@@ -96,7 +96,7 @@ async function handleGridSizeChange(newSize: number) {
     entries: [
       { binding: 0, resource: { buffer: gridBuffer } },
       { binding: 1, resource: { buffer: cellStateStorage[0] } },
-      { binding: 2, resource: { buffer: cellStateStorage[1] } }
+      { binding: 2, resource: { buffer: cellStateStorage[1] } },
     ],
   });
   bindGroups[1] = device.createBindGroup({
@@ -111,12 +111,12 @@ async function handleGridSizeChange(newSize: number) {
 
   step = 0;
   isPaused = wasPaused;
-  pauseButton!.textContent = isPaused ? 'Resume' : 'Pause';
+  pauseButton!.textContent = isPaused ? "Resume" : "Pause";
 
   if (!isPaused) {
     requestAnimationFrame(renderLoop);
   }
-}
+};
 
 const { ctx, device } = await Renderer.create(canvas);
 
@@ -134,6 +134,7 @@ const gridBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(gridBuffer, 0, gridArray);
 
+// prettier-ignore
 const vertices = new Float32Array([
 //   X,    Y,
   -0.8, -0.8,
@@ -150,15 +151,17 @@ const vertexBuffer = device.createBuffer({
   size: vertices.byteLength,
   usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/0, vertices);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, vertices);
 
 const vertexBufferLayout = {
   arrayStride: 8,
-  attributes: [{
-    format: "float32x2",
-    offset: 0,
-    shaderLocation: 0, // Position, see vertex shader
-  }],
+  attributes: [
+    {
+      format: "float32x2",
+      offset: 0,
+      shaderLocation: 0, // Position, see vertex shader
+    },
+  ],
 } satisfies GPUVertexBufferLayout;
 
 const cellStateStorage = [
@@ -169,8 +172,8 @@ const cellStateStorage = [
   }),
   device.createBuffer({
     label: "Cell State B",
-     size: initialStateArray.byteLength,
-     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    size: initialStateArray.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
 ];
 
@@ -193,8 +196,7 @@ const cellShaderModule = device.createShaderModule({
     };
 
     @vertex
-    fn vertexMain(input: VertexInput) -> VertexOutput
-    {
+    fn vertexMain(input: VertexInput) -> VertexOutput {
       let i = f32(input.instance);
       let cell = vec2f(i % grid.x, floor(i / grid.x));
       let state = f32(cellState[input.instance]);
@@ -217,7 +219,7 @@ const cellShaderModule = device.createShaderModule({
       let c = input.cell / grid;
       return vec4f(c, 1-c.x, 1);
     }
-  `
+  `,
 });
 
 const simulationShaderModule = device.createShaderModule({
@@ -260,25 +262,32 @@ const simulationShaderModule = device.createShaderModule({
         }
       }
     }
-  `
+  `,
 });
 
 // Create the bind group layout and pipeline layout.
 const bindGroupLayout = device.createBindGroupLayout({
   label: "Cell Bind Group Layout",
-  entries: [{
-    binding: 0,
-    visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT,
-    buffer: {} // Grid uniform buffer
-  }, {
-    binding: 1,
-    visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-    buffer: { type: "read-only-storage"} // Cell state input buffer
-  }, {
-    binding: 2,
-    visibility: GPUShaderStage.COMPUTE,
-    buffer: { type: "storage"} // Cell state output buffer
-  }]
+  entries: [
+    {
+      binding: 0,
+      visibility:
+        GPUShaderStage.VERTEX |
+        GPUShaderStage.COMPUTE |
+        GPUShaderStage.FRAGMENT,
+      buffer: {}, // Grid uniform buffer
+    },
+    {
+      binding: 1,
+      visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+      buffer: { type: "read-only-storage" }, // Cell state input buffer
+    },
+    {
+      binding: 2,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: "storage" }, // Cell state output buffer
+    },
+  ],
 });
 
 const bindGroups = [
@@ -288,41 +297,41 @@ const bindGroups = [
     entries: [
       {
         binding: 0,
-        resource: { buffer: gridBuffer }
+        resource: { buffer: gridBuffer },
       },
       {
         binding: 1,
-        resource: { buffer: cellStateStorage[0] }
+        resource: { buffer: cellStateStorage[0] },
       },
       {
         binding: 2,
-        resource: { buffer: cellStateStorage[1] }
-      }
+        resource: { buffer: cellStateStorage[1] },
+      },
     ],
   }),
-   device.createBindGroup({
+  device.createBindGroup({
     label: "Cell renderer bind group B",
     layout: bindGroupLayout,
     entries: [
       {
         binding: 0,
-        resource: { buffer: gridBuffer }
+        resource: { buffer: gridBuffer },
       },
       {
         binding: 1,
-        resource: { buffer: cellStateStorage[1] }
+        resource: { buffer: cellStateStorage[1] },
       },
       {
         binding: 2,
-        resource: { buffer: cellStateStorage[0] }
+        resource: { buffer: cellStateStorage[0] },
       },
     ],
-  })
+  }),
 ];
 
 const pipelineLayout = device.createPipelineLayout({
   label: "Cell Pipeline Layout",
-  bindGroupLayouts: [ bindGroupLayout ],
+  bindGroupLayouts: [bindGroupLayout],
 });
 
 const cellPipeline = device.createRenderPipeline({
@@ -331,15 +340,17 @@ const cellPipeline = device.createRenderPipeline({
   vertex: {
     module: cellShaderModule,
     entryPoint: "vertexMain",
-    buffers: [vertexBufferLayout]
+    buffers: [vertexBufferLayout],
   },
   fragment: {
     module: cellShaderModule,
     entryPoint: "fragmentMain",
-    targets: [{
-      format: canvasFormat,
-    }]
-  }
+    targets: [
+      {
+        format: canvasFormat,
+      },
+    ],
+  },
 });
 
 // Create a compute pipeline that updates the game state.
@@ -349,7 +360,7 @@ const simulationPipeline = device.createComputePipeline({
   compute: {
     module: simulationShaderModule,
     entryPoint: "computeMain",
-  }
+  },
 });
 
 const updateGrid = () => {
@@ -368,12 +379,14 @@ const updateGrid = () => {
   step++;
 
   const renderPass = encoder.beginRenderPass({
-    colorAttachments: [{
-      view: ctx.getCurrentTexture().createView(),
-      loadOp: "clear",
-      clearValue: { r: 0, g: 0, b: 0.3, a: 1 }, // New line
-      storeOp: "store",
-    }]
+    colorAttachments: [
+      {
+        view: ctx.getCurrentTexture().createView(),
+        loadOp: "clear",
+        clearValue: { r: 0, g: 0, b: 0.3, a: 1 }, // New line
+        storeOp: "store",
+      },
+    ],
   });
 
   renderPass.setPipeline(cellPipeline);
@@ -387,7 +400,6 @@ const updateGrid = () => {
   // Finish the command buffer and immediately submit it.
   device.queue.submit([encoder.finish()]);
 };
-
 
 let lastFrameTime = 0;
 
