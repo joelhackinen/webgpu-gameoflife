@@ -1,3 +1,4 @@
+import { verticesArray } from "./models/grid2";
 import Renderer from "./renderer";
 
 let GRID_SIZE = 64;
@@ -134,24 +135,12 @@ const gridBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(gridBuffer, 0, gridArray);
 
-// prettier-ignore
-const vertices = new Float32Array([
-//   X,    Y,
-  -0.8, -0.8,
-   0.8, -0.8,
-   0.8,  0.8,
-
-  -0.8, -0.8,
-   0.8,  0.8,
-  -0.8,  0.8,
-]);
-
 const vertexBuffer = device.createBuffer({
   label: "Cell vertices",
-  size: vertices.byteLength,
+  size: verticesArray.byteLength,
   usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, vertices);
+device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, verticesArray);
 
 const vertexBufferLayout = {
   arrayStride: 8,
@@ -393,7 +382,7 @@ const updateGrid = () => {
   renderPass.setVertexBuffer(0, vertexBuffer);
   renderPass.setBindGroup(0, bindGroups[step % 2]);
 
-  renderPass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE);
+  renderPass.draw(verticesArray.length / 2, GRID_SIZE * GRID_SIZE);
 
   renderPass.end();
 
