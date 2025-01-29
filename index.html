@@ -46,16 +46,6 @@
         flex-direction: column;
         gap: 0.5rem;
       }
-      #fps-form {
-        width: 100%;
-        display: flex;
-        flex-direction: row;
-        gap: 0.5rem;
-
-        * {
-          width: 100%;
-        }
-      }
     </style>
   </head>
   <body>
@@ -77,15 +67,7 @@
             <option value="1024">1024</option>
           </select>
         </div>
-        <div>
-          <label for="fps-input">Target interval</label>
-          <form id="fps-form">
-            <input type="number" min="1" id="fps-input" value="10" required />
-            <button type="submit" id="fps-button">Set</button>
-          </form>
-        </div>
         <button id="restart-button">Restart</button>
-        <button id="pause-button">Pause</button>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

@@ -1,13 +1,11 @@
-import { verticesArray } from "./models/grid2";
+import { mat4, vec3 } from "wgpu-matrix";
+import { verticesArray } from "./models/grid3";
 import Renderer from "./renderer";
 
-let GRID_SIZE = 64;
+let GRID_SIZE = 32;
 const WORKGROUP_SIZE = 8;
 
-let targetFPS = 10; // Desired FPS
-let frameInterval = 1000 / targetFPS; // Interval in milliseconds
 let step = 0;
-let isPaused = false;
 let currentInitialState: Uint32Array;
 
 const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
@@ -17,16 +15,6 @@ for (let i = 0; i < initialStateArray.length; ++i) {
 currentInitialState = initialStateArray;
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
-
-const pauseButton = document.querySelector<HTMLButtonElement>("#pause-button");
-pauseButton?.addEventListener("click", (_event) => {
-  isPaused = !isPaused;
-  pauseButton.textContent = isPaused ? "Resume" : "Pause";
-
-  if (!isPaused) {
-    requestAnimationFrame(renderLoop);
-  }
-});
 
 const restartButton =
   document.querySelector<HTMLButtonElement>("#restart-button");
@@ -38,18 +26,6 @@ restartButton?.addEventListener("click", async (_event) => {
   device.queue.writeBuffer(cellStateStorage[1], 0, currentInitialState);
 });
 
-const fpsForm = document.querySelector<HTMLFormElement>("#fps-form");
-fpsForm?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const fpsInput = document.querySelector<HTMLInputElement>("#fps-input");
-
-  const fpsValue = fpsInput?.value;
-  if (fpsValue) {
-    targetFPS = parseInt(fpsInput.value);
-    frameInterval = 1000 / targetFPS;
-  }
-});
-
 const gridSizeSelect = document.querySelector<HTMLSelectElement>("#grid-size");
 gridSizeSelect?.addEventListener("change", async (event) => {
   const newSize = parseInt((event.target as HTMLSelectElement).value);
@@ -57,10 +33,6 @@ gridSizeSelect?.addEventListener("change", async (event) => {
 });
 
 const handleGridSizeChange = async (newSize: number) => {
-  const wasPaused = isPaused;
-  isPaused = true;
-  pauseButton!.textContent = "Pause";
-
   await device.queue.onSubmittedWorkDone();
 
   GRID_SIZE = newSize;
@@ -98,6 +70,7 @@ const handleGridSizeChange = async (newSize: number) => {
       { binding: 0, resource: { buffer: gridBuffer } },
       { binding: 1, resource: { buffer: cellStateStorage[0] } },
       { binding: 2, resource: { buffer: cellStateStorage[1] } },
+      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
     ],
   });
   bindGroups[1] = device.createBindGroup({
@@ -107,16 +80,11 @@ const handleGridSizeChange = async (newSize: number) => {
       { binding: 0, resource: { buffer: gridBuffer } },
       { binding: 1, resource: { buffer: cellStateStorage[1] } },
       { binding: 2, resource: { buffer: cellStateStorage[0] } },
+      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
     ],
   });
 
   step = 0;
-  isPaused = wasPaused;
-  pauseButton!.textContent = isPaused ? "Resume" : "Pause";
-
-  if (!isPaused) {
-    requestAnimationFrame(renderLoop);
-  }
 };
 
 const { ctx, device } = await Renderer.create(canvas);
@@ -142,16 +110,16 @@ const vertexBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, verticesArray);
 
-const vertexBufferLayout = {
-  arrayStride: 8,
+const vertexBufferLayout: GPUVertexBufferLayout = {
+  arrayStride: 16,
   attributes: [
     {
       format: "float32x2",
       offset: 0,
-      shaderLocation: 0, // Position, see vertex shader
+      shaderLocation: 0,
     },
   ],
-} satisfies GPUVertexBufferLayout;
+};
 
 const cellStateStorage = [
   device.createBuffer({
@@ -168,14 +136,40 @@ const cellStateStorage = [
 
 device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
+const aspect = canvas.width / canvas.height;
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 9, aspect, 1, 100.0);
+const modelViewProjectionMatrix = mat4.create();
+
+const uniformMatrixBuffer = device.createBuffer({
+  size: 4 * 16,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+const getTransformationMatrix = () => {
+  const viewMatrix = mat4.identity();
+  mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
+  const now = Date.now() / 1000;
+  mat4.rotate(
+    viewMatrix,
+    vec3.fromValues(Math.sin(now), Math.cos(now), 0),
+    1,
+    viewMatrix,
+  );
+
+  mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+
+  return modelViewProjectionMatrix;
+};
+
 const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
   code: `
     @group(0) @binding(0) var<uniform> grid: vec2f;
     @group(0) @binding(1) var<storage> cellState: array<u32>;
+    @group(0) @binding(3) var<uniform> projectionMatrix: mat4x4f;
 
     struct VertexInput {
-      @location(0) pos: vec2f,
+      @location(0) pos: vec4f,
       @builtin(instance_index) instance: u32,
     };
     
@@ -190,11 +184,13 @@ const cellShaderModule = device.createShaderModule({
       let cell = vec2f(i % grid.x, floor(i / grid.x));
       let state = f32(cellState[input.instance]);
 
-      let cellOffset = cell / grid * 2;
-      let gridPos = (input.pos*state+1) / grid - 1 + cellOffset;
+      let grid4f = vec4f(grid, 1.0, 1.0);
+      let cellOffset = (cell * 2.0) / grid - 1.0;
+      let cubeSize = 1.0 / grid * 0.9;
+      let gridPos = input.pos.xy * cubeSize * state + cellOffset;
 
       var output: VertexOutput;
-      output.pos = vec4f(gridPos, 0, 1);
+      output.pos = projectionMatrix * vec4f(gridPos, 0.0, 1.0);
       output.cell = cell;
       return output;
     }
@@ -264,7 +260,7 @@ const bindGroupLayout = device.createBindGroupLayout({
         GPUShaderStage.VERTEX |
         GPUShaderStage.COMPUTE |
         GPUShaderStage.FRAGMENT,
-      buffer: {}, // Grid uniform buffer
+      buffer: { type: "uniform" },
     },
     {
       binding: 1,
@@ -276,6 +272,11 @@ const bindGroupLayout = device.createBindGroupLayout({
       visibility: GPUShaderStage.COMPUTE,
       buffer: { type: "storage" }, // Cell state output buffer
     },
+    {
+      binding: 3,
+      visibility: GPUShaderStage.VERTEX,
+      buffer: { type: "uniform" },
+    },
   ],
 });
 
@@ -284,36 +285,20 @@ const bindGroups = [
     label: "Cell renderer bind group A",
     layout: bindGroupLayout,
     entries: [
-      {
-        binding: 0,
-        resource: { buffer: gridBuffer },
-      },
-      {
-        binding: 1,
-        resource: { buffer: cellStateStorage[0] },
-      },
-      {
-        binding: 2,
-        resource: { buffer: cellStateStorage[1] },
-      },
+      { binding: 0, resource: { buffer: gridBuffer } },
+      { binding: 1, resource: { buffer: cellStateStorage[0] } },
+      { binding: 2, resource: { buffer: cellStateStorage[1] } },
+      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
     ],
   }),
   device.createBindGroup({
     label: "Cell renderer bind group B",
     layout: bindGroupLayout,
     entries: [
-      {
-        binding: 0,
-        resource: { buffer: gridBuffer },
-      },
-      {
-        binding: 1,
-        resource: { buffer: cellStateStorage[1] },
-      },
-      {
-        binding: 2,
-        resource: { buffer: cellStateStorage[0] },
-      },
+      { binding: 0, resource: { buffer: gridBuffer } },
+      { binding: 1, resource: { buffer: cellStateStorage[1] } },
+      { binding: 2, resource: { buffer: cellStateStorage[0] } },
+      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
     ],
   }),
 ];
@@ -340,6 +325,21 @@ const cellPipeline = device.createRenderPipeline({
       },
     ],
   },
+  primitive: {
+    topology: "triangle-list",
+    cullMode: "back",
+  },
+  depthStencil: {
+    depthWriteEnabled: true,
+    depthCompare: "less",
+    format: "depth24plus",
+  },
+});
+
+const depthTexture = device.createTexture({
+  size: [canvas.width, canvas.height],
+  format: "depth24plus",
+  usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
 // Create a compute pipeline that updates the game state.
@@ -372,38 +372,36 @@ const updateGrid = () => {
       {
         view: ctx.getCurrentTexture().createView(),
         loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0.3, a: 1 }, // New line
+        clearValue: { r: 0, g: 0, b: 0.3, a: 1 },
         storeOp: "store",
       },
     ],
+    depthStencilAttachment: {
+      view: depthTexture.createView(),
+      depthClearValue: 1.0,
+      depthLoadOp: "clear",
+      depthStoreOp: "store",
+    },
   });
+  const transformationMatrix = getTransformationMatrix();
+  device.queue.writeBuffer(
+    uniformMatrixBuffer,
+    0,
+    transformationMatrix.buffer,
+    transformationMatrix.byteOffset,
+    transformationMatrix.byteLength,
+  );
 
   renderPass.setPipeline(cellPipeline);
   renderPass.setVertexBuffer(0, vertexBuffer);
   renderPass.setBindGroup(0, bindGroups[step % 2]);
 
-  renderPass.draw(verticesArray.length / 2, GRID_SIZE * GRID_SIZE);
+  renderPass.draw(verticesArray.length / 4, GRID_SIZE * GRID_SIZE);
 
   renderPass.end();
 
-  // Finish the command buffer and immediately submit it.
   device.queue.submit([encoder.finish()]);
+  requestAnimationFrame(updateGrid);
 };
 
-let lastFrameTime = 0;
-
-const renderLoop = (timestamp: number) => {
-  if (isPaused) return;
-
-  const elapsedTime = timestamp - lastFrameTime;
-
-  if (elapsedTime >= frameInterval) {
-    lastFrameTime = timestamp;
-    updateGrid(); // Perform the rendering and update logic
-  }
-
-  requestAnimationFrame(renderLoop);
-};
-
-// Start the render loop
-requestAnimationFrame(renderLoop);
+requestAnimationFrame(updateGrid);
