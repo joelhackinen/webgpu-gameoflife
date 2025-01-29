@@ -114,7 +114,7 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
   arrayStride: 16,
   attributes: [
     {
-      format: "float32x2",
+      format: "float32x4",
       offset: 0,
       shaderLocation: 0,
     },
@@ -151,7 +151,7 @@ const getTransformationMatrix = () => {
   const now = Date.now() / 1000;
   mat4.rotate(
     viewMatrix,
-    vec3.fromValues(Math.sin(now), Math.cos(now), 0),
+    vec3.fromValues(Math.sin(now * 0.5), Math.cos(now * 0.5), 0),
     1,
     viewMatrix,
   );
@@ -184,13 +184,20 @@ const cellShaderModule = device.createShaderModule({
       let cell = vec2f(i % grid.x, floor(i / grid.x));
       let state = f32(cellState[input.instance]);
 
-      let grid4f = vec4f(grid, 1.0, 1.0);
       let cellOffset = (cell * 2.0) / grid - 1.0;
-      let cubeSize = 1.0 / grid * 0.9;
-      let gridPos = input.pos.xy * cubeSize * state + cellOffset;
+      let cubeSize = 1.0 / grid.x * 0.6;
+      
+      let position = vec4f(input.pos.xyz * cubeSize * state, 1.0);
+
+      let modelMatrix = mat4x4f(
+        vec4f(1, 0, 0, 0),
+        vec4f(0, 1, 0, 0),
+        vec4f(0, 0, 1, 0),
+        vec4f(cellOffset, 0.0, 1)
+      );
 
       var output: VertexOutput;
-      output.pos = projectionMatrix * vec4f(gridPos, 0.0, 1.0);
+      output.pos = projectionMatrix * modelMatrix * position;
       output.cell = cell;
       return output;
     }
