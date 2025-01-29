@@ -2,15 +2,15 @@ import { mat4, vec3 } from "wgpu-matrix";
 import { verticesArray } from "./models/grid3";
 import Renderer from "./renderer";
 
-let GRID_SIZE = 32;
-const WORKGROUP_SIZE = 8;
+let GRID_SIZE = 16;
+const WORKGROUP_SIZE = 4;
 
 let step = 0;
 let currentInitialState: Uint32Array;
 
-const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+const initialStateArray = new Uint32Array(GRID_SIZE ** 3);
 for (let i = 0; i < initialStateArray.length; ++i) {
-  initialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+  initialStateArray[i] = Math.random() > 0.5 ? 1 : 0;
 }
 currentInitialState = initialStateArray;
 
@@ -37,13 +37,13 @@ const handleGridSizeChange = async (newSize: number) => {
 
   GRID_SIZE = newSize;
 
-  const newInitialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+  const newInitialStateArray = new Uint32Array(GRID_SIZE ** 3);
   for (let i = 0; i < newInitialStateArray.length; ++i) {
-    newInitialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+    newInitialStateArray[i] = Math.random() > 0.5 ? 1 : 0;
   }
   currentInitialState = newInitialStateArray;
 
-  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
   device.queue.writeBuffer(gridBuffer, 0, newGridArray);
 
   cellStateStorage[0].destroy();
@@ -95,7 +95,7 @@ ctx.configure({
   format: canvasFormat,
 });
 
-const gridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+const gridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
 const gridBuffer = device.createBuffer({
   label: "Grid Uniforms",
   size: gridArray.byteLength,
@@ -164,7 +164,7 @@ const getTransformationMatrix = () => {
 const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
   code: `
-    @group(0) @binding(0) var<uniform> grid: vec2f;
+    @group(0) @binding(0) var<uniform> grid: vec3f;
     @group(0) @binding(1) var<storage> cellState: array<u32>;
     @group(0) @binding(3) var<uniform> projectionMatrix: mat4x4f;
 
@@ -175,16 +175,24 @@ const cellShaderModule = device.createShaderModule({
     
     struct VertexOutput {
       @builtin(position) pos: vec4f,
-      @location(0) cell: vec2f,
+      @location(0) cell: vec3f,
     };
 
     @vertex
     fn vertexMain(input: VertexInput) -> VertexOutput {
       let i = f32(input.instance);
-      let cell = vec2f(i % grid.x, floor(i / grid.x));
+      let cell = vec3f(
+        i % grid.x,
+        floor(i / grid.x % grid.y),
+        floor(i / (grid.x * grid.y))
+      );
       let state = f32(cellState[input.instance]);
 
-      let cellOffset = (cell * 2.0) / grid - 1.0;
+      let cellOffset = vec3f(
+        (cell.x * 2.0) / grid.x - 1.0,
+        (cell.y * 2.0) / grid.y - 1.0,
+        (cell.z * 2.0) / grid.z - 1.0
+      );
       let cubeSize = 1.0 / grid.x * 0.6;
       
       let position = vec4f(input.pos.xyz * cubeSize * state, 1.0);
@@ -193,7 +201,7 @@ const cellShaderModule = device.createShaderModule({
         vec4f(1, 0, 0, 0),
         vec4f(0, 1, 0, 0),
         vec4f(0, 0, 1, 0),
-        vec4f(cellOffset, 0.0, 1)
+        vec4f(cellOffset, 1)
       );
 
       var output: VertexOutput;
@@ -203,13 +211,13 @@ const cellShaderModule = device.createShaderModule({
     }
 
     struct FragInput {
-      @location(0) cell: vec2f,
+      @location(0) cell: vec3f,
     };
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
       let c = input.cell / grid;
-      return vec4f(c, 1-c.x, 1);
+      return vec4f(c.xy, 1-c.z, 1);
     }
   `,
 });
@@ -221,36 +229,42 @@ const simulationShaderModule = device.createShaderModule({
     @group(0) @binding(1) var<storage> cellStateIn: array<u32>;
     @group(0) @binding(2) var<storage, read_write> cellStateOut: array<u32>;
 
-    fn cellIndex(cell: vec2u) -> u32 {
-      return (cell.y % u32(grid.y)) * u32(grid.x) +
-            (cell.x % u32(grid.x));
+    fn cellIndex(cell: vec3u) -> u32 {
+      return cell.x + cell.y * u32(grid.x) + cell.z * u32(grid.x * grid.y);
     }
 
-    fn cellActive(x: u32, y: u32) -> u32 {
-      return cellStateIn[cellIndex(vec2(x, y))];
+    fn cellActive(x: u32, y: u32, z: u32) -> u32 {
+      return cellStateIn[cellIndex(vec3u(x, y, z))];
     }
 
-    @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE}, 1)
+    @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
     fn computeMain(@builtin(global_invocation_id) cell: vec3u) {
-      let activeNeighbors = cellActive(cell.x+1, cell.y+1) +
-                            cellActive(cell.x+1, cell.y) +
-                            cellActive(cell.x+1, cell.y-1) +
-                            cellActive(cell.x, cell.y-1) +
-                            cellActive(cell.x-1, cell.y-1) +
-                            cellActive(cell.x-1, cell.y) +
-                            cellActive(cell.x-1, cell.y+1) +
-                            cellActive(cell.x, cell.y+1);
+      var activeNeighbors: u32 = 0;
       
-      let i = cellIndex(cell.xy);
-      switch activeNeighbors {
-        case 2: {
-          cellStateOut[i] = cellStateIn[i];
+      for (var dx: u32 = 0; dx < 3; dx++) {
+        for (var dy: u32 = 0; dy < 3; dy++) {
+          for (var dz: u32 = 0; dz < 3; dz++) {
+            if (dx == 1 && dy == 1 && dz == 1) {
+              continue;
+            }
+            let nx = cell.x + dx - 1;
+            let ny = cell.y + dy - 1;
+            let nz = cell.z + dz - 1;
+            activeNeighbors += cellActive(nx, ny, nz);
+          }
         }
-        case 3: {
+      }
+      
+      let i = cellIndex(cell.xyz);
+      switch activeNeighbors {
+        case 5: {
           cellStateOut[i] = 1;
         }
-        default: {
+        case 1, 2, 3, 4, 8 {
           cellStateOut[i] = 0;
+        }
+        default: {
+          cellStateOut[i] = cellStateIn[i];
         }
       }
     }
@@ -368,7 +382,7 @@ const updateGrid = () => {
   computePass.setBindGroup(0, bindGroups[step % 2]);
 
   const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
-  computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
+  computePass.dispatchWorkgroups(workgroupCount, workgroupCount, workgroupCount);
 
   computePass.end();
 
@@ -403,7 +417,7 @@ const updateGrid = () => {
   renderPass.setVertexBuffer(0, vertexBuffer);
   renderPass.setBindGroup(0, bindGroups[step % 2]);
 
-  renderPass.draw(verticesArray.length / 4, GRID_SIZE * GRID_SIZE);
+  renderPass.draw(verticesArray.length / 4, GRID_SIZE ** 3);
 
   renderPass.end();
 
