@@ -137,7 +137,7 @@ const cellStateStorage = [
 device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 9, aspect, 1, 100.0);
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100.0);
 const modelViewProjectionMatrix = mat4.create();
 
 const uniformMatrixBuffer = device.createBuffer({
@@ -187,13 +187,8 @@ const cellShaderModule = device.createShaderModule({
         floor(i / (grid.x * grid.y))
       );
       let state = f32(cellState[input.instance]);
-
-      let cellOffset = vec3f(
-        (cell.x * 2.0) / grid.x - 1.0,
-        (cell.y * 2.0) / grid.y - 1.0,
-        (cell.z * 2.0) / grid.z - 1.0
-      );
-      let cubeSize = 1.0 / grid.x * 0.6;
+      let cellOffset = ((cell * 2.0) - grid + 1.0) / grid;
+      let cubeSize = 1.0 / grid.x * 0.8;
       
       let position = vec4f(input.pos.xyz * cubeSize * state, 1.0);
 
