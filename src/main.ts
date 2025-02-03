@@ -114,9 +114,14 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
   arrayStride: 16,
   attributes: [
     {
-      format: "float32x4",
+      format: "float32x3",
       offset: 0,
       shaderLocation: 0,
+    },
+    {
+      format: "float32",
+      offset: 12,
+      shaderLocation: 1,
     },
   ],
 };
@@ -137,7 +142,7 @@ const cellStateStorage = [
 device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100.0);
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
 const modelViewProjectionMatrix = mat4.create();
 
 const uniformMatrixBuffer = device.createBuffer({
@@ -169,13 +174,15 @@ const cellShaderModule = device.createShaderModule({
     @group(0) @binding(3) var<uniform> projectionMatrix: mat4x4f;
 
     struct VertexInput {
-      @location(0) pos: vec4f,
+      @location(0) pos: vec3f,
+      @location(1) encodedModelSpaceNormal: f32,
       @builtin(instance_index) instance: u32,
     };
     
     struct VertexOutput {
       @builtin(position) pos: vec4f,
       @location(0) cell: vec3f,
+      @location(1) normal: vec3f,
     };
 
     @vertex
@@ -187,10 +194,10 @@ const cellShaderModule = device.createShaderModule({
         floor(i / (grid.x * grid.y))
       );
       let state = f32(cellState[input.instance]);
-      let cellOffset = ((cell * 2.0) - grid + 1.0) / grid;
-      let cubeSize = 1.0 / grid.x * 0.8;
+      let cellOffset = (cell * 2.0 - grid + 1.0) / grid;
+      let cubeSize = 1.0 / grid * 0.8;
       
-      let position = vec4f(input.pos.xyz * cubeSize * state, 1.0);
+      let position = vec4f(input.pos * cubeSize * state, 1.0);
 
       let modelMatrix = mat4x4f(
         vec4f(1, 0, 0, 0),
@@ -202,17 +209,28 @@ const cellShaderModule = device.createShaderModule({
       var output: VertexOutput;
       output.pos = projectionMatrix * modelMatrix * position;
       output.cell = cell;
+
+      switch u32(input.encodedModelSpaceNormal) {
+        case 1:   { output.normal = vec3f( 0, -1,  0); }  // bottom
+        case 2:   { output.normal = vec3f( 1,  0,  0); }  // right
+        case 3:   { output.normal = vec3f( 0,  1,  0); }  // top
+        case 4:   { output.normal = vec3f(-1,  0,  0); }  // left
+        case 5:   { output.normal = vec3f( 0,  0,  1); }  // back
+        default:  { output.normal = vec3f( 0,  0, -1); }  // front
+      }
+
       return output;
     }
 
     struct FragInput {
       @location(0) cell: vec3f,
+      @location(1) normal: vec3f,
     };
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
-      let c = input.cell / grid;
-      return vec4f(c.xy, 1-c.z, 1);
+      let normalColor = (input.normal + 1.0) / 2;
+      return vec4f(normalColor, 1);
     }
   `,
 });
