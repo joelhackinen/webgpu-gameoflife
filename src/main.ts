@@ -2,7 +2,7 @@ import { mat4, vec3 } from "wgpu-matrix";
 import { verticesArray } from "./models/grid3";
 import Renderer from "./renderer";
 
-let GRID_SIZE = 16;
+let GRID_SIZE = 4;
 const WORKGROUP_SIZE = 4;
 
 let step = 0;
@@ -143,14 +143,13 @@ device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
-const modelViewProjectionMatrix = mat4.create();
 
 const uniformMatrixBuffer = device.createBuffer({
-  size: 4 * 16,
+  size: 2 * 4 * 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-const getTransformationMatrix = () => {
+const getMatrixData = () => {
   const viewMatrix = mat4.identity();
   mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
   const now = Date.now() / 1000;
@@ -161,9 +160,11 @@ const getTransformationMatrix = () => {
     viewMatrix,
   );
 
-  mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+  const matrixData = new Float32Array(32);
+  matrixData.set(viewMatrix, 0);
+  matrixData.set(projectionMatrix, 16);
 
-  return modelViewProjectionMatrix;
+  return matrixData;
 };
 
 const cellShaderModule = device.createShaderModule({
@@ -171,7 +172,12 @@ const cellShaderModule = device.createShaderModule({
   code: `
     @group(0) @binding(0) var<uniform> grid: vec3f;
     @group(0) @binding(1) var<storage> cellState: array<u32>;
-    @group(0) @binding(3) var<uniform> projectionMatrix: mat4x4f;
+    @group(0) @binding(3) var<uniform> matrixData: MatrixData;
+
+    struct MatrixData {
+      view: mat4x4f,
+      projection: mat4x4f,
+    };
 
     struct VertexInput {
       @location(0) pos: vec3f,
@@ -207,17 +213,19 @@ const cellShaderModule = device.createShaderModule({
       );
 
       var output: VertexOutput;
-      output.pos = projectionMatrix * modelMatrix * position;
+      output.pos = matrixData.projection * matrixData.view * modelMatrix * position;
       output.cell = cell;
 
+      var modelNormal: vec3f;
       switch u32(input.encodedModelSpaceNormal) {
-        case 1:   { output.normal = vec3f( 0, -1,  0); }  // bottom
-        case 2:   { output.normal = vec3f( 1,  0,  0); }  // right
-        case 3:   { output.normal = vec3f( 0,  1,  0); }  // top
-        case 4:   { output.normal = vec3f(-1,  0,  0); }  // left
-        case 5:   { output.normal = vec3f( 0,  0,  1); }  // back
-        default:  { output.normal = vec3f( 0,  0, -1); }  // front
+        case 1:   { modelNormal  = vec3f( 0, -1,  0); }  // bottom
+        case 2:   { modelNormal  = vec3f( 1,  0,  0); }  // right
+        case 3:   { modelNormal  = vec3f( 0,  1,  0); }  // top
+        case 4:   { modelNormal  = vec3f(-1,  0,  0); }  // left
+        case 5:   { modelNormal  = vec3f( 0,  0,  1); }  // back
+        default:  { modelNormal  = vec3f( 0,  0, -1); }  // front
       }
+      output.normal = normalize((matrixData.view * vec4f(modelNormal, 0.0)).xyz);
 
       return output;
     }
@@ -229,8 +237,11 @@ const cellShaderModule = device.createShaderModule({
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
-      let normalColor = (input.normal + 1.0) / 2;
-      return vec4f(normalColor, 1);
+      let lightDir = normalize(vec3f(0.0, 0.0, 1.0));
+      let diffuse = max(dot(input.normal, lightDir), 0.0);
+      let ambient = 0.2;
+      let color = vec3f(0.8, 0.8, 0.8) * (diffuse + ambient);
+      return vec4f(color, 1);
     }
   `,
 });
@@ -238,7 +249,7 @@ const cellShaderModule = device.createShaderModule({
 const simulationShaderModule = device.createShaderModule({
   label: "Game of Life simulation shader",
   code: `
-    @group(0) @binding(0) var<uniform> grid: vec2f;
+    @group(0) @binding(0) var<uniform> grid: vec3f;
     @group(0) @binding(1) var<storage> cellStateIn: array<u32>;
     @group(0) @binding(2) var<storage, read_write> cellStateOut: array<u32>;
 
@@ -417,13 +428,13 @@ const updateGrid = () => {
       depthStoreOp: "store",
     },
   });
-  const transformationMatrix = getTransformationMatrix();
+  const matrixData = getMatrixData();
   device.queue.writeBuffer(
     uniformMatrixBuffer,
     0,
-    transformationMatrix.buffer,
-    transformationMatrix.byteOffset,
-    transformationMatrix.byteLength,
+    matrixData.buffer,
+    matrixData.byteOffset,
+    matrixData.byteLength,
   );
 
   renderPass.setPipeline(cellPipeline);
