@@ -8,11 +8,15 @@ const WORKGROUP_SIZE = 4;
 let step = 0;
 let currentInitialState: Uint32Array;
 
-const initialStateArray = new Uint32Array(GRID_SIZE ** 3);
-for (let i = 0; i < initialStateArray.length; ++i) {
-  initialStateArray[i] = Math.random() > 0.5 ? 1 : 0;
-}
-currentInitialState = initialStateArray;
+const createStateArray = (size: number) => {
+  const initialStateArray = new Uint32Array(size);
+  for (let i = 0; i < initialStateArray.length; ++i) {
+    initialStateArray[i] = Math.random() > 0.0 ? 1 : 0;
+  }
+  return initialStateArray;
+};
+
+const initialStateArray = createStateArray(GRID_SIZE ** 3);
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
 
@@ -37,11 +41,7 @@ const handleGridSizeChange = async (newSize: number) => {
 
   GRID_SIZE = newSize;
 
-  const newInitialStateArray = new Uint32Array(GRID_SIZE ** 3);
-  for (let i = 0; i < newInitialStateArray.length; ++i) {
-    newInitialStateArray[i] = Math.random() > 0.5 ? 1 : 0;
-  }
-  currentInitialState = newInitialStateArray;
+  const newInitialStateArray = createStateArray(newSize ** 3);
 
   const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
   device.queue.writeBuffer(gridBuffer, 0, newGridArray);
@@ -85,6 +85,7 @@ const handleGridSizeChange = async (newSize: number) => {
   });
 
   step = 0;
+  currentInitialState = newInitialStateArray;
 };
 
 const { ctx, device } = await Renderer.create(canvas);
@@ -145,7 +146,7 @@ const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
 
 const uniformMatrixBuffer = device.createBuffer({
-  size: 2 * 4 * 16,
+  size: 3 * 4 * 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -153,16 +154,18 @@ const getMatrixData = () => {
   const viewMatrix = mat4.identity();
   mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
   const now = Date.now() / 1000;
+  const rotationMatrix = mat4.identity();
   mat4.rotate(
-    viewMatrix,
+    rotationMatrix,
     vec3.fromValues(Math.sin(now * 0.5), Math.cos(now * 0.5), 0),
     1,
-    viewMatrix,
+    rotationMatrix,
   );
 
-  const matrixData = new Float32Array(32);
+  const matrixData = new Float32Array(48);
   matrixData.set(viewMatrix, 0);
   matrixData.set(projectionMatrix, 16);
+  matrixData.set(rotationMatrix, 32);
 
   return matrixData;
 };
@@ -177,6 +180,7 @@ const cellShaderModule = device.createShaderModule({
     struct MatrixData {
       view: mat4x4f,
       projection: mat4x4f,
+      rotation: mat4x4f,
     };
 
     struct VertexInput {
@@ -187,8 +191,8 @@ const cellShaderModule = device.createShaderModule({
     
     struct VertexOutput {
       @builtin(position) pos: vec4f,
-      @location(0) cell: vec3f,
-      @location(1) normal: vec3f,
+      @location(0) normal: vec3f,
+      @location(1) worldPos: vec3f,
     };
 
     @vertex
@@ -213,8 +217,8 @@ const cellShaderModule = device.createShaderModule({
       );
 
       var output: VertexOutput;
-      output.pos = matrixData.projection * matrixData.view * modelMatrix * position;
-      output.cell = cell;
+      let rotatedModelPosition = matrixData.rotation * modelMatrix * position;
+      output.pos = matrixData.projection * matrixData.view * rotatedModelPosition;
 
       var modelNormal: vec3f;
       switch u32(input.encodedModelSpaceNormal) {
@@ -225,21 +229,23 @@ const cellShaderModule = device.createShaderModule({
         case 5:   { modelNormal  = vec3f( 0,  0,  1); }  // back
         default:  { modelNormal  = vec3f( 0,  0, -1); }  // front
       }
-      output.normal = normalize((matrixData.view * vec4f(modelNormal, 0.0)).xyz);
+      output.normal = normalize((matrixData.rotation * vec4f(modelNormal, 1.0)).xyz);
+      output.worldPos = rotatedModelPosition.xyz;
 
       return output;
     }
 
     struct FragInput {
-      @location(0) cell: vec3f,
-      @location(1) normal: vec3f,
+      @location(0) normal: vec3f,
+      @location(1) worldPos: vec3f,
     };
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
-      let lightDir = normalize(vec3f(0.0, 0.0, 1.0));
+      let lightPos = vec3f(0.0, 1.0, 3.0);
+      let lightDir = normalize(lightPos - input.worldPos);
       let diffuse = max(dot(input.normal, lightDir), 0.0);
-      let ambient = 0.2;
+      let ambient = 0.4;
       let color = vec3f(0.8, 0.8, 0.8) * (diffuse + ambient);
       return vec4f(color, 1);
     }
@@ -406,7 +412,11 @@ const updateGrid = () => {
   computePass.setBindGroup(0, bindGroups[step % 2]);
 
   const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
-  computePass.dispatchWorkgroups(workgroupCount, workgroupCount, workgroupCount);
+  computePass.dispatchWorkgroups(
+    workgroupCount,
+    workgroupCount,
+    workgroupCount,
+  );
 
   computePass.end();
 
