@@ -2,17 +2,21 @@ import { mat4, vec3 } from "wgpu-matrix";
 import { verticesArray } from "./models/grid3";
 import Renderer from "./renderer";
 
-let GRID_SIZE = 32;
-const WORKGROUP_SIZE = 8;
+let GRID_SIZE = 4;
+const WORKGROUP_SIZE = 4;
 
 let step = 0;
 let currentInitialState: Uint32Array;
 
-const initialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
-for (let i = 0; i < initialStateArray.length; ++i) {
-  initialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
-}
-currentInitialState = initialStateArray;
+const createStateArray = (size: number) => {
+  const initialStateArray = new Uint32Array(size);
+  for (let i = 0; i < initialStateArray.length; ++i) {
+    initialStateArray[i] = Math.random() > 0.0 ? 1 : 0;
+  }
+  return initialStateArray;
+};
+
+const initialStateArray = createStateArray(GRID_SIZE ** 3);
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
 
@@ -37,13 +41,9 @@ const handleGridSizeChange = async (newSize: number) => {
 
   GRID_SIZE = newSize;
 
-  const newInitialStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
-  for (let i = 0; i < newInitialStateArray.length; ++i) {
-    newInitialStateArray[i] = Math.random() > 0.6 ? 1 : 0;
-  }
-  currentInitialState = newInitialStateArray;
+  const newInitialStateArray = createStateArray(newSize ** 3);
 
-  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
   device.queue.writeBuffer(gridBuffer, 0, newGridArray);
 
   cellStateStorage[0].destroy();
@@ -85,6 +85,7 @@ const handleGridSizeChange = async (newSize: number) => {
   });
 
   step = 0;
+  currentInitialState = newInitialStateArray;
 };
 
 const { ctx, device } = await Renderer.create(canvas);
@@ -95,7 +96,7 @@ ctx.configure({
   format: canvasFormat,
 });
 
-const gridArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
+const gridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
 const gridBuffer = device.createBuffer({
   label: "Grid Uniforms",
   size: gridArray.byteLength,
@@ -114,9 +115,14 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
   arrayStride: 16,
   attributes: [
     {
-      format: "float32x4",
+      format: "float32x3",
       offset: 0,
       shaderLocation: 0,
+    },
+    {
+      format: "float32",
+      offset: 12,
+      shaderLocation: 1,
     },
   ],
 };
@@ -137,79 +143,111 @@ const cellStateStorage = [
 device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
 
 const aspect = canvas.width / canvas.height;
-const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100.0);
-const modelViewProjectionMatrix = mat4.create();
+const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
 
 const uniformMatrixBuffer = device.createBuffer({
-  size: 4 * 16,
+  size: 3 * 4 * 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-const getTransformationMatrix = () => {
+const getMatrixData = () => {
   const viewMatrix = mat4.identity();
   mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
   const now = Date.now() / 1000;
+  const rotationMatrix = mat4.identity();
   mat4.rotate(
-    viewMatrix,
+    rotationMatrix,
     vec3.fromValues(Math.sin(now * 0.5), Math.cos(now * 0.5), 0),
     1,
-    viewMatrix,
+    rotationMatrix,
   );
 
-  mat4.multiply(projectionMatrix, viewMatrix, modelViewProjectionMatrix);
+  const matrixData = new Float32Array(48);
+  matrixData.set(viewMatrix, 0);
+  matrixData.set(projectionMatrix, 16);
+  matrixData.set(rotationMatrix, 32);
 
-  return modelViewProjectionMatrix;
+  return matrixData;
 };
 
 const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
   code: `
-    @group(0) @binding(0) var<uniform> grid: vec2f;
+    @group(0) @binding(0) var<uniform> grid: vec3f;
     @group(0) @binding(1) var<storage> cellState: array<u32>;
-    @group(0) @binding(3) var<uniform> projectionMatrix: mat4x4f;
+    @group(0) @binding(3) var<uniform> matrixData: MatrixData;
+
+    struct MatrixData {
+      view: mat4x4f,
+      projection: mat4x4f,
+      rotation: mat4x4f,
+    };
 
     struct VertexInput {
-      @location(0) pos: vec4f,
+      @location(0) pos: vec3f,
+      @location(1) encodedModelSpaceNormal: f32,
       @builtin(instance_index) instance: u32,
     };
     
     struct VertexOutput {
       @builtin(position) pos: vec4f,
-      @location(0) cell: vec2f,
+      @location(0) normal: vec3f,
+      @location(1) worldPos: vec3f,
     };
 
     @vertex
     fn vertexMain(input: VertexInput) -> VertexOutput {
       let i = f32(input.instance);
-      let cell = vec2f(i % grid.x, floor(i / grid.x));
+      let cell = vec3f(
+        i % grid.x,
+        floor(i / grid.x % grid.y),
+        floor(i / (grid.x * grid.y))
+      );
       let state = f32(cellState[input.instance]);
-
-      let cellOffset = ((cell * 2.0) - grid + 1.0) / grid;
-      let cubeSize = 1.0 / grid.x * 0.6;
+      let cellOffset = (cell * 2.0 - grid + 1.0) / grid;
+      let cubeSize = 1.0 / grid * 0.8;
       
-      let position = vec4f(input.pos.xyz * cubeSize * state, 1.0);
+      let position = vec4f(input.pos * cubeSize * state, 1.0);
 
       let modelMatrix = mat4x4f(
         vec4f(1, 0, 0, 0),
         vec4f(0, 1, 0, 0),
         vec4f(0, 0, 1, 0),
-        vec4f(cellOffset, 0.0, 1)
+        vec4f(cellOffset, 1)
       );
 
       var output: VertexOutput;
-      output.pos = projectionMatrix * modelMatrix * position;
-      output.cell = cell;
+      let rotatedModelPosition = matrixData.rotation * modelMatrix * position;
+      output.pos = matrixData.projection * matrixData.view * rotatedModelPosition;
+
+      var modelNormal: vec3f;
+      switch u32(input.encodedModelSpaceNormal) {
+        case 1:   { modelNormal  = vec3f( 0, -1,  0); }  // bottom
+        case 2:   { modelNormal  = vec3f( 1,  0,  0); }  // right
+        case 3:   { modelNormal  = vec3f( 0,  1,  0); }  // top
+        case 4:   { modelNormal  = vec3f(-1,  0,  0); }  // left
+        case 5:   { modelNormal  = vec3f( 0,  0,  1); }  // back
+        default:  { modelNormal  = vec3f( 0,  0, -1); }  // front
+      }
+      output.normal = normalize((matrixData.rotation * vec4f(modelNormal, 1.0)).xyz);
+      output.worldPos = rotatedModelPosition.xyz;
+
       return output;
     }
 
     struct FragInput {
-      @location(0) cell: vec2f,
+      @location(0) normal: vec3f,
+      @location(1) worldPos: vec3f,
     };
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
-      let c = input.cell / grid;
-      return vec4f(c, 1-c.x, 1);
+      let lightPos = vec3f(0.0, 1.0, 3.0);
+      let lightDir = normalize(lightPos - input.worldPos);
+      let diffuse = max(dot(input.normal, lightDir), 0.0);
+      let ambient = 0.4;
+      let color = vec3f(0.8, 0.8, 0.8) * (diffuse + ambient);
+      return vec4f(color, 1);
     }
   `,
 });
@@ -217,40 +255,46 @@ const cellShaderModule = device.createShaderModule({
 const simulationShaderModule = device.createShaderModule({
   label: "Game of Life simulation shader",
   code: `
-    @group(0) @binding(0) var<uniform> grid: vec2f;
+    @group(0) @binding(0) var<uniform> grid: vec3f;
     @group(0) @binding(1) var<storage> cellStateIn: array<u32>;
     @group(0) @binding(2) var<storage, read_write> cellStateOut: array<u32>;
 
-    fn cellIndex(cell: vec2u) -> u32 {
-      return (cell.y % u32(grid.y)) * u32(grid.x) +
-            (cell.x % u32(grid.x));
+    fn cellIndex(cell: vec3u) -> u32 {
+      return cell.x + cell.y * u32(grid.x) + cell.z * u32(grid.x * grid.y);
     }
 
-    fn cellActive(x: u32, y: u32) -> u32 {
-      return cellStateIn[cellIndex(vec2(x, y))];
+    fn cellActive(x: u32, y: u32, z: u32) -> u32 {
+      return cellStateIn[cellIndex(vec3u(x, y, z))];
     }
 
-    @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE}, 1)
+    @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
     fn computeMain(@builtin(global_invocation_id) cell: vec3u) {
-      let activeNeighbors = cellActive(cell.x+1, cell.y+1) +
-                            cellActive(cell.x+1, cell.y) +
-                            cellActive(cell.x+1, cell.y-1) +
-                            cellActive(cell.x, cell.y-1) +
-                            cellActive(cell.x-1, cell.y-1) +
-                            cellActive(cell.x-1, cell.y) +
-                            cellActive(cell.x-1, cell.y+1) +
-                            cellActive(cell.x, cell.y+1);
+      var activeNeighbors: u32 = 0;
       
-      let i = cellIndex(cell.xy);
-      switch activeNeighbors {
-        case 2: {
-          cellStateOut[i] = cellStateIn[i];
+      for (var dx: u32 = 0; dx < 3; dx++) {
+        for (var dy: u32 = 0; dy < 3; dy++) {
+          for (var dz: u32 = 0; dz < 3; dz++) {
+            if (dx == 1 && dy == 1 && dz == 1) {
+              continue;
+            }
+            let nx = cell.x + dx - 1;
+            let ny = cell.y + dy - 1;
+            let nz = cell.z + dz - 1;
+            activeNeighbors += cellActive(nx, ny, nz);
+          }
         }
-        case 3: {
+      }
+      
+      let i = cellIndex(cell.xyz);
+      switch activeNeighbors {
+        case 5: {
           cellStateOut[i] = 1;
         }
-        default: {
+        case 1, 2, 3, 4, 8 {
           cellStateOut[i] = 0;
+        }
+        default: {
+          cellStateOut[i] = cellStateIn[i];
         }
       }
     }
@@ -368,7 +412,11 @@ const updateGrid = () => {
   computePass.setBindGroup(0, bindGroups[step % 2]);
 
   const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
-  computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
+  computePass.dispatchWorkgroups(
+    workgroupCount,
+    workgroupCount,
+    workgroupCount,
+  );
 
   computePass.end();
 
@@ -390,20 +438,20 @@ const updateGrid = () => {
       depthStoreOp: "store",
     },
   });
-  const transformationMatrix = getTransformationMatrix();
+  const matrixData = getMatrixData();
   device.queue.writeBuffer(
     uniformMatrixBuffer,
     0,
-    transformationMatrix.buffer,
-    transformationMatrix.byteOffset,
-    transformationMatrix.byteLength,
+    matrixData.buffer,
+    matrixData.byteOffset,
+    matrixData.byteLength,
   );
 
   renderPass.setPipeline(cellPipeline);
   renderPass.setVertexBuffer(0, vertexBuffer);
   renderPass.setBindGroup(0, bindGroups[step % 2]);
 
-  renderPass.draw(verticesArray.length / 4, GRID_SIZE * GRID_SIZE);
+  renderPass.draw(verticesArray.length / 4, GRID_SIZE ** 3);
 
   renderPass.end();
 
