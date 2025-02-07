@@ -229,7 +229,7 @@ const cellShaderModule = device.createShaderModule({
         case 5:   { modelNormal  = vec3f( 0,  0,  1); }  // back
         default:  { modelNormal  = vec3f( 0,  0, -1); }  // front
       }
-      output.normal = normalize((matrixData.rotation * vec4f(modelNormal, 1.0)).xyz);
+      output.normal = normalize((matrixData.rotation * vec4f(modelNormal, 0.0)).xyz);
       output.worldPos = rotatedModelPosition.xyz;
 
       return output;
@@ -242,11 +242,11 @@ const cellShaderModule = device.createShaderModule({
 
     @fragment
     fn fragmentMain(input: FragInput) -> @location(0) vec4f {
-      let lightPos = vec3f(0.0, 1.0, 3.0);
+      let lightPos = vec3f(1.0, 1.0, 2.0);
       let lightDir = normalize(lightPos - input.worldPos);
       let diffuse = max(dot(input.normal, lightDir), 0.0);
       let ambient = 0.4;
-      let color = vec3f(0.8, 0.8, 0.8) * (diffuse + ambient);
+      let color = vec3f(0.9, 0.9, 0.9) * clamp((diffuse + ambient), 0.0, 1.0);
       return vec4f(color, 1);
     }
   `,
