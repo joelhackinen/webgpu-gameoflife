@@ -4,19 +4,20 @@ import Renderer from "./renderer";
 
 let GRID_SIZE = 4;
 const WORKGROUP_SIZE = 4;
+const MAX_GRID_SIZE = 64;
+const CELL_STATE_BUFFER_SIZE = MAX_GRID_SIZE ** 3 * 4; // 4 bytes per uint32
 
 let step = 0;
-let currentInitialState: Uint32Array;
 
 const createStateArray = (size: number) => {
-  const initialStateArray = new Uint32Array(size);
-  for (let i = 0; i < initialStateArray.length; ++i) {
-    initialStateArray[i] = Math.random() > 0.0 ? 1 : 0;
+  const stateArray = new Uint32Array(size);
+  for (let i = 0; i < stateArray.length; ++i) {
+    stateArray[i] = Math.random() > 0.0 ? 1 : 0;
   }
-  return initialStateArray;
+  return stateArray;
 };
 
-const initialStateArray = createStateArray(GRID_SIZE ** 3);
+let currentInitialState = createStateArray(GRID_SIZE ** 3);
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
 
@@ -39,52 +40,16 @@ gridSizeSelect?.addEventListener("change", async (event) => {
 const handleGridSizeChange = async (newSize: number) => {
   await device.queue.onSubmittedWorkDone();
 
-  GRID_SIZE = newSize;
-
   const newInitialStateArray = createStateArray(newSize ** 3);
 
-  const newGridArray = new Float32Array([GRID_SIZE, GRID_SIZE, GRID_SIZE]);
+  const newGridArray = new Float32Array([newSize, newSize, newSize]);
   device.queue.writeBuffer(gridBuffer, 0, newGridArray);
-
-  cellStateStorage[0].destroy();
-  cellStateStorage[1].destroy();
-
-  cellStateStorage[0] = device.createBuffer({
-    label: "Cell State",
-    size: newInitialStateArray.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
-  cellStateStorage[1] = device.createBuffer({
-    label: "Cell State B",
-    size: newInitialStateArray.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
 
   device.queue.writeBuffer(cellStateStorage[0], 0, newInitialStateArray);
   device.queue.writeBuffer(cellStateStorage[1], 0, newInitialStateArray);
 
-  bindGroups[0] = device.createBindGroup({
-    label: "Cell renderer bind group A",
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: { buffer: gridBuffer } },
-      { binding: 1, resource: { buffer: cellStateStorage[0] } },
-      { binding: 2, resource: { buffer: cellStateStorage[1] } },
-      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
-    ],
-  });
-  bindGroups[1] = device.createBindGroup({
-    label: "Cell renderer bind group B",
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: { buffer: gridBuffer } },
-      { binding: 1, resource: { buffer: cellStateStorage[1] } },
-      { binding: 2, resource: { buffer: cellStateStorage[0] } },
-      { binding: 3, resource: { buffer: uniformMatrixBuffer } },
-    ],
-  });
-
   step = 0;
+  GRID_SIZE = newSize;
   currentInitialState = newInitialStateArray;
 };
 
@@ -130,29 +95,35 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
 const cellStateStorage = [
   device.createBuffer({
     label: "Cell State",
-    size: initialStateArray.byteLength,
+    size: CELL_STATE_BUFFER_SIZE,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
   device.createBuffer({
     label: "Cell State B",
-    size: initialStateArray.byteLength,
+    size: CELL_STATE_BUFFER_SIZE,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   }),
 ];
 
-device.queue.writeBuffer(cellStateStorage[0], 0, initialStateArray);
+device.queue.writeBuffer(cellStateStorage[0], 0, currentInitialState);
 
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
+const viewMatrix = mat4.identity();
+mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
 
 const uniformMatrixBuffer = device.createBuffer({
   size: 3 * 4 * 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-const getMatrixData = () => {
-  const viewMatrix = mat4.identity();
-  mat4.translate(viewMatrix, vec3.fromValues(0, 0, -4), viewMatrix);
+const matrixData = new Float32Array(32);
+matrixData.set(viewMatrix, 0);
+matrixData.set(projectionMatrix, 16);
+
+device.queue.writeBuffer(uniformMatrixBuffer, 0, matrixData);
+
+const getRotationMatrix = () => {
   const now = Date.now() / 1000;
   const rotationMatrix = mat4.identity();
   mat4.rotate(
@@ -162,12 +133,7 @@ const getMatrixData = () => {
     rotationMatrix,
   );
 
-  const matrixData = new Float32Array(48);
-  matrixData.set(viewMatrix, 0);
-  matrixData.set(projectionMatrix, 16);
-  matrixData.set(rotationMatrix, 32);
-
-  return matrixData;
+  return rotationMatrix;
 };
 
 const cellShaderModule = device.createShaderModule({
@@ -438,13 +404,13 @@ const updateGrid = () => {
       depthStoreOp: "store",
     },
   });
-  const matrixData = getMatrixData();
+  const rotationMatrix = getRotationMatrix();
   device.queue.writeBuffer(
     uniformMatrixBuffer,
-    0,
-    matrixData.buffer,
-    matrixData.byteOffset,
-    matrixData.byteLength,
+    128,
+    rotationMatrix.buffer,
+    rotationMatrix.byteOffset,
+    rotationMatrix.byteLength,
   );
 
   renderPass.setPipeline(cellPipeline);
