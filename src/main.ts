@@ -9,15 +9,16 @@ const CELL_STATE_BUFFER_SIZE = MAX_GRID_SIZE ** 3 * 4; // 4 bytes per uint32
 
 let step = 0;
 
-const createStateArray = (size: number) => {
-  const stateArray = new Uint32Array(size);
-  for (let i = 0; i < stateArray.length; ++i) {
-    stateArray[i] = Math.random() > 0.0 ? 1 : 0;
+const initialState = new Uint32Array(MAX_GRID_SIZE ** 3);
+
+const setInitialState = (newGridSize: number) => {
+  const relevantRangeEnd = newGridSize ** 3;
+  for (let i = 0; i < relevantRangeEnd; ++i) {
+    initialState[i] = Math.random() > 0.0 ? 1 : 0;
   }
-  return stateArray;
 };
 
-let currentInitialState = createStateArray(GRID_SIZE ** 3);
+setInitialState(GRID_SIZE);
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
 
@@ -27,8 +28,8 @@ restartButton?.addEventListener("click", async (_event) => {
   await device.queue.onSubmittedWorkDone();
 
   step = 0;
-  device.queue.writeBuffer(cellStateStorage[0], 0, currentInitialState);
-  device.queue.writeBuffer(cellStateStorage[1], 0, currentInitialState);
+  device.queue.writeBuffer(cellStateStorage[0], 0, initialState);
+  device.queue.writeBuffer(cellStateStorage[1], 0, initialState);
 });
 
 const gridSizeSelect = document.querySelector<HTMLSelectElement>("#grid-size");
@@ -40,17 +41,18 @@ gridSizeSelect?.addEventListener("change", async (event) => {
 const handleGridSizeChange = async (newSize: number) => {
   await device.queue.onSubmittedWorkDone();
 
-  const newInitialStateArray = createStateArray(newSize ** 3);
+  setInitialState(newSize);
 
   const newGridArray = new Float32Array([newSize, newSize, newSize]);
   device.queue.writeBuffer(gridBuffer, 0, newGridArray);
 
-  device.queue.writeBuffer(cellStateStorage[0], 0, newInitialStateArray);
-  device.queue.writeBuffer(cellStateStorage[1], 0, newInitialStateArray);
+  // prettier-ignore
+  device.queue.writeBuffer(cellStateStorage[0], 0, initialState, 0, newSize ** 3);
+  // prettier-ignore
+  device.queue.writeBuffer(cellStateStorage[1], 0, initialState, 0, newSize ** 3);
 
   step = 0;
   GRID_SIZE = newSize;
-  currentInitialState = newInitialStateArray;
 };
 
 const { ctx, device } = await Renderer.create(canvas);
@@ -74,10 +76,10 @@ const vertexBuffer = device.createBuffer({
   size: verticesArray.byteLength,
   usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
-device.queue.writeBuffer(vertexBuffer, /*bufferOffset=*/ 0, verticesArray);
+device.queue.writeBuffer(vertexBuffer, 0, verticesArray);
 
 const vertexBufferLayout: GPUVertexBufferLayout = {
-  arrayStride: 16,
+  arrayStride: Float32Array.BYTES_PER_ELEMENT * 4,
   attributes: [
     {
       format: "float32x3",
@@ -86,7 +88,7 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
     },
     {
       format: "float32",
-      offset: 12,
+      offset: Float32Array.BYTES_PER_ELEMENT * 3,
       shaderLocation: 1,
     },
   ],
@@ -105,7 +107,7 @@ const cellStateStorage = [
   }),
 ];
 
-device.queue.writeBuffer(cellStateStorage[0], 0, currentInitialState);
+device.queue.writeBuffer(cellStateStorage[0], 0, initialState);
 
 const aspect = canvas.width / canvas.height;
 const projectionMatrix = mat4.perspective((2 * Math.PI) / 6, aspect, 1, 100);
